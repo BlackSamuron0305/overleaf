@@ -1,8 +1,7 @@
 const fsPromises = require('node:fs/promises')
 const os = require('node:os')
 const Path = require('node:path')
-const { callbackify, promisify } = require('node:util')
-const { execFile } = require('node:child_process')
+const { callbackify } = require('node:util')
 
 const Settings = require('@overleaf/settings')
 const logger = require('@overleaf/logger')
@@ -42,90 +41,6 @@ const KNOWN_LATEXMK_RULES = new Set([
 ])
 
 const LATEX_PASSES_RULES = new Set(['latex', 'lualatex', 'xelatex', 'pdflatex'])
-
-const execFilePromise = promisify(execFile)
-
-// Regex patterns for detecting missing LaTeX packages in compilation output
-const MISSING_FILE_PATTERNS = [
-  /^! LaTeX Error: File `([^']+\.\w+)' not found/gm,
-  /^! I can't find file `([^']+)'/gm,
-  /^LaTeX Error: File `([^']+\.\w+)' not found/gm,
-  /^Package inputenc Error:.*`([^']+)' not found/gm,
-]
-
-/**
- * Parse output.log for missing LaTeX packages/files.
- * Returns an array of missing file names (e.g. ["tikz.sty", "babel.def"]).
- */
-async function _parseMissingPackages(compileDir) {
-  const logPath = Path.join(compileDir, 'output.log')
-  let logContent
-  try {
-    logContent = await fsPromises.readFile(logPath, 'utf-8')
-  } catch {
-    return []
-  }
-
-  const missingFiles = new Set()
-  for (const pattern of MISSING_FILE_PATTERNS) {
-    pattern.lastIndex = 0
-    let match
-    while ((match = pattern.exec(logContent)) !== null) {
-      missingFiles.add(match[1])
-    }
-  }
-  return Array.from(missingFiles)
-}
-
-/**
- * Attempt to install missing LaTeX packages using tlmgr.
- * Returns an array of successfully installed package names.
- */
-async function _autoInstallPackages(missingFiles, projectId) {
-  const installed = []
-  for (const file of missingFiles) {
-    try {
-      const { stdout: searchResult } = await execFilePromise('tlmgr', [
-        'search',
-        '--global',
-        '--file',
-        `/${file}`,
-      ])
-      const pkgMatch = searchResult.match(/^(\S+):$/m)
-      if (!pkgMatch) {
-        logger.warn(
-          { file, projectId },
-          'auto-install: no tlmgr package found for file'
-        )
-        continue
-      }
-      const packageName = pkgMatch[1]
-      logger.info(
-        { file, packageName, projectId },
-        'auto-install: installing LaTeX package'
-      )
-      await execFilePromise('tlmgr', ['install', packageName], {
-        timeout: 120000,
-      })
-      installed.push(packageName)
-    } catch (err) {
-      logger.warn(
-        { err, file, projectId },
-        'auto-install: failed to install package'
-      )
-    }
-  }
-
-  if (installed.length > 0) {
-    try {
-      await execFilePromise('texhash', [], { timeout: 60000 })
-    } catch (err) {
-      logger.warn({ err, projectId }, 'auto-install: texhash failed')
-    }
-  }
-
-  return installed
-}
 
 function getCompileName(projectId, userId) {
   if (userId != null) {
@@ -279,7 +194,7 @@ async function doCompile(request, stats, timings) {
   enableLatexMkMetrics(stats)
 
   try {
-    const runLatexArgs = {
+    await LatexRunner.promises.runLatex(compileName, {
       directory: compileDir,
       mainFile: request.rootResourcePath,
       compiler: request.compiler,
@@ -291,37 +206,7 @@ async function doCompile(request, stats, timings) {
       stopOnFirstError: request.stopOnFirstError,
       stats,
       timings,
-    }
-
-    await LatexRunner.promises.runLatex(compileName, runLatexArgs)
-
-    // Auto-install: retry up to 10 times, each pass installing any newly
-    // detected missing packages, until the compile succeeds or no new
-    // packages can be found/installed.
-    if (Settings.autoInstallPackages) {
-      const alreadyInstalled = new Set()
-      for (let attempt = 0; attempt < 10; attempt++) {
-        if (!stats['latexmk-errors']) break
-        const missingFiles = await _parseMissingPackages(compileDir)
-        const newFiles = missingFiles.filter(f => !alreadyInstalled.has(f))
-        if (newFiles.length === 0) break
-        logger.info(
-          { projectId: request.project_id, missingFiles: newFiles },
-          'auto-install: detected missing packages, attempting install'
-        )
-        const installed = await _autoInstallPackages(
-          newFiles,
-          request.project_id
-        )
-        if (installed.length === 0) break
-        for (const f of newFiles) alreadyInstalled.add(f)
-        logger.info(
-          { projectId: request.project_id, installed },
-          'auto-install: packages installed, retrying compilation'
-        )
-        await LatexRunner.promises.runLatex(compileName, runLatexArgs)
-      }
-    }
+    })
 
     // We use errors to return the validation state. It would be nice to use a
     // more appropriate mechanism.
