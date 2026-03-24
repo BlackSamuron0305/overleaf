@@ -670,7 +670,14 @@ async function doCompile(request, stats, timings) {
 
   // Define a `latexmk` property on the stats object
   // to collect latexmk -time stats.
-  enableLatexMkMetrics(stats)
+  try {
+    enableLatexMkMetrics(stats)
+  } catch {
+    // Fallback if Object.defineProperty fails (e.g. base image version mismatch)
+    if (!stats.latexmk) {
+      stats.latexmk = {}
+    }
+  }
 
   try {
     const runLatexArgs = {
