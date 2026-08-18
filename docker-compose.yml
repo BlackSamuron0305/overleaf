@@ -41,8 +41,11 @@ services:
       # OVERLEAF_EMAIL_SMTP_USER: ""
       # OVERLEAF_EMAIL_SMTP_PASS: ""
 
-      # IMPORTANT: Required for invite token generation
-      # OVERLEAF_INVITE_TOKEN_SECRET: generate with `openssl rand -base64 32`
+      # REQUIRED since Overleaf's 000_check_missing_secrets gate: the container
+      # refuses to start without it. Value lives in .env (gitignored); generate
+      # once with `openssl rand -base64 32`. Must stay STABLE across restarts
+      # and upgrades - changing it invalidates invite tokens already in the DB.
+      OVERLEAF_INVITE_TOKEN_SECRET: "${OVERLEAF_INVITE_TOKEN_SECRET:?set OVERLEAF_INVITE_TOKEN_SECRET in .env}"
 
       # Embedded databases (run MongoDB + Redis inside this container)
       EMBEDDED_MONGO: "true"
