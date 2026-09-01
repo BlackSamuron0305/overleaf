@@ -6,7 +6,7 @@ WORKDIR /build
 
 RUN go install github.com/a8m/envsubst/cmd/envsubst@latest
 
-FROM maven:3-amazoncorretto-21-debian AS base
+FROM maven:3-amazoncorretto-25-debian AS base
 
 RUN apt-get update && apt-get install -y make git sqlite3 curl \
  && rm -rf /var/lib/apt/lists
@@ -44,7 +44,7 @@ RUN make package \
       -name 'writelatex-git-bridge*jar-with-dependencies.jar' \
       -exec mv {} /git-bridge.jar \;
 
-FROM amazoncorretto:21-alpine
+FROM amazoncorretto:25-alpine
 
 RUN apk add --update --no-cache bash git sqlite procps htop net-tools jemalloc util-linux
 
